@@ -27,7 +27,6 @@ export default function RecordingControls({
   });
   const [countdown, setCountdown] = useState<number | null>(null);
   const [showOptions, setShowOptions] = useState(true);
-  const webcamPreviewRef = useRef<HTMLVideoElement>(null);
   const durationRef = useRef<number>(0);
 
   // Update duration ref for use in stop handler
@@ -35,10 +34,10 @@ export default function RecordingControls({
     durationRef.current = state.duration;
   }, [state.duration]);
 
-  // Show webcam preview
-  useEffect(() => {
-    if (state.webcamStream && webcamPreviewRef.current) {
-      webcamPreviewRef.current.srcObject = state.webcamStream;
+  // Callback ref to attach webcam stream to video element
+  const setWebcamRef = useCallback((videoElement: HTMLVideoElement | null) => {
+    if (videoElement && state.webcamStream) {
+      videoElement.srcObject = state.webcamStream;
     }
   }, [state.webcamStream]);
 
@@ -97,7 +96,7 @@ export default function RecordingControls({
         {state.webcamStream && (
           <div className="mt-6">
             <video
-              ref={webcamPreviewRef}
+              ref={setWebcamRef}
               autoPlay
               muted
               playsInline
@@ -117,7 +116,7 @@ export default function RecordingControls({
         {state.webcamStream && (
           <div className="fixed bottom-6 left-6 z-50">
             <video
-              ref={webcamPreviewRef}
+              ref={setWebcamRef}
               autoPlay
               muted
               playsInline
