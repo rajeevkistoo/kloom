@@ -112,68 +112,78 @@ export default function RecordingControls({
   // Recording view (active recording or manually paused - but not during countdown)
   if (state.isRecording) {
     return (
-      <div className="flex flex-col items-center space-y-6">
-        {/* Recording indicator */}
-        <div className="flex items-center space-x-3">
-          <div className={`w-4 h-4 rounded-full ${state.isPaused ? 'bg-yellow-500' : 'bg-red-500 animate-pulse'}`} />
-          <span className="text-2xl font-mono font-bold">
-            {formatDuration(state.duration)}
-          </span>
-          <span className="text-sm text-gray-500">
-            {state.isPaused ? 'Paused' : 'Recording'}
-          </span>
-        </div>
-
-        {/* Webcam preview */}
+      <>
+        {/* Webcam preview - fixed circular overlay bottom-left, 10% of viewport */}
         {state.webcamStream && (
-          <div className="relative">
+          <div className="fixed bottom-6 left-6 z-50">
             <video
               ref={webcamPreviewRef}
               autoPlay
               muted
               playsInline
-              className="w-32 h-24 rounded-full object-cover border-4 border-white shadow-lg"
+              className="rounded-full object-cover border-4 border-white shadow-2xl"
+              style={{
+                width: '10vw',
+                height: '10vw',
+                minWidth: '100px',
+                minHeight: '100px',
+                maxWidth: '200px',
+                maxHeight: '200px',
+              }}
             />
           </div>
         )}
 
-        {/* Controls */}
-        <div className="flex items-center space-x-4">
-          {state.isPaused ? (
+        <div className="flex flex-col items-center space-y-6">
+          {/* Recording indicator */}
+          <div className="flex items-center space-x-3">
+            <div className={`w-4 h-4 rounded-full ${state.isPaused ? 'bg-yellow-500' : 'bg-red-500 animate-pulse'}`} />
+            <span className="text-2xl font-mono font-bold">
+              {formatDuration(state.duration)}
+            </span>
+            <span className="text-sm text-gray-500">
+              {state.isPaused ? 'Paused' : 'Recording'}
+            </span>
+          </div>
+
+          {/* Controls */}
+          <div className="flex items-center space-x-4">
+            {state.isPaused ? (
+              <button
+                onClick={actions.resumeRecording}
+                className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Resume
+              </button>
+            ) : (
+              <button
+                onClick={actions.pauseRecording}
+                className="px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Pause
+              </button>
+            )}
+
             <button
-              onClick={actions.resumeRecording}
-              className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+              onClick={handleStop}
+              className="px-8 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
             >
-              Resume
+              Stop Recording
             </button>
-          ) : (
+
             <button
-              onClick={actions.pauseRecording}
-              className="px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-medium transition-colors"
+              onClick={handleCancel}
+              className="px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
             >
-              Pause
+              Cancel
             </button>
+          </div>
+
+          {state.error && (
+            <p className="text-red-500 text-sm">{state.error}</p>
           )}
-
-          <button
-            onClick={handleStop}
-            className="px-8 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
-          >
-            Stop Recording
-          </button>
-
-          <button
-            onClick={handleCancel}
-            className="px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
-          >
-            Cancel
-          </button>
         </div>
-
-        {state.error && (
-          <p className="text-red-500 text-sm">{state.error}</p>
-        )}
-      </div>
+      </>
     );
   }
 
