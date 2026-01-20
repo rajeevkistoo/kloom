@@ -15,7 +15,7 @@ export interface RecorderOptions {
   screenEnabled: boolean;
   webcamEnabled: boolean;
   micEnabled: boolean;
-  quality: '720p' | '1080p';
+  quality: '720p' | '1080p' | '4k';
 }
 
 export interface RecorderActions {
@@ -26,11 +26,14 @@ export interface RecorderActions {
   cancelRecording: () => void;
 }
 
-const getVideoConstraints = (quality: '720p' | '1080p') => {
-  if (quality === '1080p') {
-    return { width: 1920, height: 1080 };
+const getVideoConstraints = (quality: '720p' | '1080p' | '4k') => {
+  if (quality === '4k') {
+    return { width: { ideal: 3840 }, height: { ideal: 2160 } };
   }
-  return { width: 1280, height: 720 };
+  if (quality === '1080p') {
+    return { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  }
+  return { width: { ideal: 1280 }, height: { ideal: 720 } };
 };
 
 export function useRecorder(): [RecorderState, RecorderActions] {
@@ -48,23 +51,12 @@ export function useRecorder(): [RecorderState, RecorderActions] {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(0);
   const pausedDurationRef = useRef<number>(0);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
-  const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
       }
       if (state.screenStream) {
         state.screenStream.getTracks().forEach(track => track.stop());
@@ -96,32 +88,27 @@ export function useRecorder(): [RecorderState, RecorderActions] {
       chunksRef.current = [];
       pausedDurationRef.current = 0;
 
-      const { width, height } = getVideoConstraints(options.quality);
+      const constraints = getVideoConstraints(options.quality);
       let screenStream: MediaStream | null = null;
       let webcamStream: MediaStream | null = null;
-      let micStream: MediaStream | null = null;
+      let audioStream: MediaStream | null = null;
 
-      // Get screen share with system audio
+      // Get screen share
       if (options.screenEnabled) {
         try {
           screenStream = await navigator.mediaDevices.getDisplayMedia({
             video: {
-              width: { ideal: width },
-              height: { ideal: height },
+              ...constraints,
               frameRate: { ideal: 30 },
             },
-            audio: {
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: false,
-            },
+            audio: true, // System audio if available
           });
         } catch {
           throw new Error('Screen sharing was cancelled or denied');
         }
       }
 
-      // Get webcam
+      // Get webcam (for preview only - not merged into recording yet)
       if (options.webcamEnabled) {
         try {
           webcamStream = await navigator.mediaDevices.getUserMedia({
@@ -140,11 +127,11 @@ export function useRecorder(): [RecorderState, RecorderActions] {
       // Get microphone
       if (options.micEnabled) {
         try {
-          micStream = await navigator.mediaDevices.getUserMedia({
+          audioStream = await navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: true,
               noiseSuppression: true,
-              autoGainControl: true,
+              sampleRate: 44100,
             },
             video: false,
           });
@@ -153,136 +140,36 @@ export function useRecorder(): [RecorderState, RecorderActions] {
         }
       }
 
-      if (!screenStream) {
-        throw new Error('Screen stream is required');
-      }
+      // Combine streams
+      const tracks: MediaStreamTrack[] = [];
 
-      // Create canvas for compositing
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d')!;
-      canvasRef.current = canvas;
-
-      // Create video elements for streams
-      const screenVideo = document.createElement('video');
-      screenVideo.srcObject = screenStream;
-      screenVideo.muted = true;
-      await screenVideo.play();
-      screenVideoRef.current = screenVideo;
-
-      let webcamVideo: HTMLVideoElement | null = null;
-      if (webcamStream) {
-        webcamVideo = document.createElement('video');
-        webcamVideo.srcObject = webcamStream;
-        webcamVideo.muted = true;
-        await webcamVideo.play();
-        webcamVideoRef.current = webcamVideo;
-      }
-
-      // Animation loop to composite screen + webcam
-      const drawFrame = () => {
-        // Draw screen
-        ctx.drawImage(screenVideo, 0, 0, width, height);
-
-        // Draw webcam in bottom-right corner (picture-in-picture)
-        if (webcamVideo && webcamStream) {
-          const pipWidth = Math.round(width * 0.2); // 20% of screen width
-          const pipHeight = Math.round(pipWidth * (3 / 4)); // 4:3 aspect ratio
-          const margin = 20;
-          const pipX = width - pipWidth - margin;
-          const pipY = height - pipHeight - margin;
-
-          // Draw circular webcam with border
-          ctx.save();
-
-          // Create circular clip
-          const centerX = pipX + pipWidth / 2;
-          const centerY = pipY + pipHeight / 2;
-          const radius = Math.min(pipWidth, pipHeight) / 2;
-
-          // Draw border/shadow
-          ctx.beginPath();
-          ctx.arc(centerX, centerY, radius + 4, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-          ctx.fill();
-
-          // Clip to circle
-          ctx.beginPath();
-          ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-          ctx.clip();
-
-          // Draw webcam video (centered and cropped to fill circle)
-          const videoAspect = webcamVideo.videoWidth / webcamVideo.videoHeight;
-          const pipAspect = pipWidth / pipHeight;
-          let drawWidth, drawHeight, offsetX, offsetY;
-
-          if (videoAspect > pipAspect) {
-            drawHeight = pipHeight;
-            drawWidth = pipHeight * videoAspect;
-            offsetX = pipX - (drawWidth - pipWidth) / 2;
-            offsetY = pipY;
-          } else {
-            drawWidth = pipWidth;
-            drawHeight = pipWidth / videoAspect;
-            offsetX = pipX;
-            offsetY = pipY - (drawHeight - pipHeight) / 2;
-          }
-
-          ctx.drawImage(webcamVideo, offsetX, offsetY, drawWidth, drawHeight);
-          ctx.restore();
+      if (screenStream) {
+        tracks.push(...screenStream.getVideoTracks());
+        // Add system audio if available
+        const screenAudioTracks = screenStream.getAudioTracks();
+        if (screenAudioTracks.length > 0) {
+          tracks.push(...screenAudioTracks);
         }
-
-        animationFrameRef.current = requestAnimationFrame(drawFrame);
-      };
-
-      drawFrame();
-
-      // Get canvas stream
-      const canvasStream = canvas.captureStream(30);
-
-      // Mix audio tracks using AudioContext
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-      const destination = audioContext.createMediaStreamDestination();
-
-      // Add system audio from screen share
-      const screenAudioTracks = screenStream.getAudioTracks();
-      if (screenAudioTracks.length > 0) {
-        const screenAudioStream = new MediaStream(screenAudioTracks);
-        const screenAudioSource = audioContext.createMediaStreamSource(screenAudioStream);
-        screenAudioSource.connect(destination);
       }
 
-      // Add microphone audio
-      if (micStream) {
-        const micSource = audioContext.createMediaStreamSource(micStream);
-        // Add a gain node to control mic volume
-        const micGain = audioContext.createGain();
-        micGain.gain.value = 1.0;
-        micSource.connect(micGain);
-        micGain.connect(destination);
+      if (audioStream) {
+        tracks.push(...audioStream.getAudioTracks());
       }
 
-      // Combine canvas video with mixed audio
-      const finalTracks: MediaStreamTrack[] = [
-        ...canvasStream.getVideoTracks(),
-        ...destination.stream.getAudioTracks(),
-      ];
+      if (tracks.length === 0) {
+        throw new Error('No media tracks available');
+      }
 
-      const combinedStream = new MediaStream(finalTracks);
+      const combinedStream = new MediaStream(tracks);
 
       // Set up MediaRecorder
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-        ? 'video/webm;codecs=vp9,opus'
-        : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-        ? 'video/webm;codecs=vp8,opus'
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
         : 'video/webm';
 
       const mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType,
-        videoBitsPerSecond: options.quality === '1080p' ? 5000000 : 2500000,
-        audioBitsPerSecond: 128000,
+        videoBitsPerSecond: options.quality === '4k' ? 15000000 : options.quality === '1080p' ? 5000000 : 2500000,
       });
 
       mediaRecorder.ondataavailable = (event) => {
@@ -292,14 +179,17 @@ export function useRecorder(): [RecorderState, RecorderActions] {
       };
 
       // Handle screen share stop (user clicks "Stop sharing")
-      screenStream.getVideoTracks()[0].onended = () => {
-        if (mediaRecorderRef.current?.state === 'recording') {
-          mediaRecorderRef.current.stop();
-        }
-      };
+      if (screenStream) {
+        screenStream.getVideoTracks()[0].onended = () => {
+          if (mediaRecorderRef.current?.state === 'recording') {
+            // Auto-stop recording when screen share ends
+            mediaRecorderRef.current.stop();
+          }
+        };
+      }
 
       mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(1000);
+      mediaRecorder.start(1000); // Collect data every second
 
       setState({
         isRecording: true,
@@ -331,34 +221,12 @@ export function useRecorder(): [RecorderState, RecorderActions] {
         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
         chunksRef.current = [];
 
-        // Stop animation frame
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-          animationFrameRef.current = null;
-        }
-
-        // Close audio context
-        if (audioContextRef.current) {
-          audioContextRef.current.close();
-          audioContextRef.current = null;
-        }
-
         // Stop all tracks
         if (state.screenStream) {
           state.screenStream.getTracks().forEach(track => track.stop());
         }
         if (state.webcamStream) {
           state.webcamStream.getTracks().forEach(track => track.stop());
-        }
-
-        // Clean up video elements
-        if (screenVideoRef.current) {
-          screenVideoRef.current.srcObject = null;
-          screenVideoRef.current = null;
-        }
-        if (webcamVideoRef.current) {
-          webcamVideoRef.current.srcObject = null;
-          webcamVideoRef.current = null;
         }
 
         stopTimer();
@@ -407,34 +275,12 @@ export function useRecorder(): [RecorderState, RecorderActions] {
 
     chunksRef.current = [];
 
-    // Stop animation frame
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-
-    // Close audio context
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
     // Stop all tracks
     if (state.screenStream) {
       state.screenStream.getTracks().forEach(track => track.stop());
     }
     if (state.webcamStream) {
       state.webcamStream.getTracks().forEach(track => track.stop());
-    }
-
-    // Clean up video elements
-    if (screenVideoRef.current) {
-      screenVideoRef.current.srcObject = null;
-      screenVideoRef.current = null;
-    }
-    if (webcamVideoRef.current) {
-      webcamVideoRef.current.srcObject = null;
-      webcamVideoRef.current = null;
     }
 
     stopTimer();

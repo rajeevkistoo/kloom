@@ -118,8 +118,18 @@ export default function Dashboard() {
     r.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const getStatusBadge = (status: Recording['status']) => {
-    switch (status) {
+  const getStatusBadge = (recording: Recording) => {
+    // If processing/uploading for more than 10 minutes, show as failed
+    const createdAt = new Date(recording.createdAt).getTime();
+    const now = Date.now();
+    const isStuck = (recording.status === 'processing' || recording.status === 'uploading') &&
+                    (now - createdAt > 10 * 60 * 1000);
+
+    if (isStuck) {
+      return <span className="px-2 py-1 text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 rounded-full">Failed</span>;
+    }
+
+    switch (recording.status) {
       case 'ready':
         return <span className="px-2 py-1 text-xs bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 rounded-full">Ready</span>;
       case 'uploading':
@@ -289,7 +299,7 @@ export default function Dashboard() {
 
               {/* Right side - status and actions */}
               <div className="flex items-center space-x-4 ml-4">
-                {getStatusBadge(recording.status)}
+                {getStatusBadge(recording)}
 
                 {/* Copy link button */}
                 <button

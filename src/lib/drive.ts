@@ -1,4 +1,5 @@
 import { google, drive_v3 } from 'googleapis';
+import { Storage } from '@google-cloud/storage';
 import { Readable } from 'stream';
 
 // Initialize Google Drive API
@@ -11,6 +12,13 @@ function getDriveClient(): drive_v3.Drive {
 
   return google.drive({ version: 'v3', auth });
 }
+
+// Initialize Google Cloud Storage
+function getStorageClient(): Storage {
+  return new Storage();
+}
+
+const GCS_BUCKET = process.env.GCS_BUCKET || `${process.env.GOOGLE_CLOUD_PROJECT}-uploads`;
 
 export interface UploadResult {
   fileId: string;
@@ -179,4 +187,110 @@ export function getStreamUrl(fileId: string): string {
 // Get embeddable preview URL
 export function getPreviewUrl(fileId: string): string {
   return `https://drive.google.com/file/d/${fileId}/preview`;
+}
+
+// ============================================
+// Google Cloud Storage functions for large uploads
+// ============================================
+
+export interface SignedUrlResult {
+  uploadUrl: string;
+  gcsPath: string;
+}
+
+// Generate a signed URL for direct client upload to GCS
+export async function generateSignedUploadUrl(
+  recordingId: string,
+  contentType: string = 'video/webm'
+): Promise<SignedUrlResult> {
+  const storage = getStorageClient();
+  const gcsPath = `uploads/${recordingId}.webm`;
+
+  const [url] = await storage.bucket(GCS_BUCKET).file(gcsPath).getSignedUrl({
+    version: 'v4',
+    action: 'write',
+    expires: Date.now() + 60 * 60 * 1000, // 1 hour
+    contentType,
+  });
+
+  return { uploadUrl: url, gcsPath };
+}
+
+// Download from GCS and upload to Drive
+export async function transferFromGcsToDrive(
+  gcsPath: string,
+  fileName: string,
+  folderId: string
+): Promise<UploadResult> {
+  const storage = getStorageClient();
+  const drive = getDriveClient();
+
+  console.log(`[Transfer] Downloading from GCS: ${gcsPath}`);
+
+  // Download from GCS
+  const bucket = storage.bucket(GCS_BUCKET);
+  const file = bucket.file(gcsPath);
+  const [buffer] = await file.download();
+
+  console.log(`[Transfer] Downloaded ${buffer.length} bytes, uploading to Drive`);
+
+  // Create a readable stream from the buffer
+  const stream = new Readable();
+  stream.push(buffer);
+  stream.push(null);
+
+  // Upload to Drive
+  const response = await drive.files.create({
+    requestBody: {
+      name: fileName,
+      parents: [folderId],
+    },
+    media: {
+      mimeType: 'video/webm',
+      body: stream,
+    },
+    fields: 'id,webViewLink,webContentLink',
+    supportsAllDrives: true,
+  });
+
+  const fileId = response.data.id!;
+  console.log(`[Transfer] Uploaded to Drive: ${fileId}`);
+
+  // Make the file publicly accessible
+  await drive.permissions.create({
+    fileId,
+    supportsAllDrives: true,
+    requestBody: {
+      role: 'reader',
+      type: 'anyone',
+    },
+  });
+
+  // Get updated file info
+  const fileInfo = await drive.files.get({
+    fileId,
+    fields: 'id,webViewLink,webContentLink',
+    supportsAllDrives: true,
+  });
+
+  // Delete from GCS after successful transfer
+  try {
+    await file.delete();
+    console.log(`[Transfer] Deleted from GCS: ${gcsPath}`);
+  } catch (error) {
+    console.warn(`[Transfer] Failed to delete from GCS: ${error}`);
+  }
+
+  return {
+    fileId: fileInfo.data.id!,
+    webViewLink: fileInfo.data.webViewLink || '',
+    webContentLink: fileInfo.data.webContentLink || '',
+  };
+}
+
+// Check if a file exists in GCS
+export async function checkGcsFile(gcsPath: string): Promise<boolean> {
+  const storage = getStorageClient();
+  const [exists] = await storage.bucket(GCS_BUCKET).file(gcsPath).exists();
+  return exists;
 }

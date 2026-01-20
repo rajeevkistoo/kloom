@@ -18,8 +18,11 @@ export default function Home() {
   const [uploadState, setUploadState] = useState<UploadState | null>(null);
 
   const handleRecordingComplete = useCallback(async (blob: Blob, duration: number) => {
+    console.log(`[Client] Recording complete: ${blob.size} bytes, ${duration}s`);
+
     try {
-      // First, create the recording entry
+      // Step 1: Create recording entry and get signed upload URL
+      console.log('[Client] Creating recording entry...');
       const createResponse = await fetch('/api/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -31,6 +34,7 @@ export default function Home() {
       });
 
       const createData = await createResponse.json();
+      console.log('[Client] Create response:', createData);
 
       if (createData.error) {
         alert(createData.error);
@@ -38,22 +42,65 @@ export default function Home() {
         return;
       }
 
+      const recordingId = createData.recording.id;
+      const uploadUrl = createData.uploadUrl; // Signed GCS URL
+      const transferUrl = createData.transferUrl; // Transfer endpoint
+      console.log(`[Client] Recording created: ${recordingId}`);
+
       // Set upload state immediately so user can share the link
       setUploadState({
-        recordingId: createData.recording.id,
+        recordingId: recordingId,
         shareUrl: createData.shareUrl,
       });
       setView('upload');
 
-      // Upload the video in the background
-      await fetch(`/api/upload/${createData.recording.id}`, {
-        method: 'PUT',
-        body: blob,
-      });
+      // Step 2: Upload directly to GCS using signed URL (bypasses 32MB limit)
+      console.log(`[Client] Uploading to GCS, size: ${blob.size} bytes`);
+
+      try {
+        const gcsResponse = await fetch(uploadUrl, {
+          method: 'PUT',
+          body: blob,
+          headers: {
+            'Content-Type': 'video/webm',
+          },
+        });
+
+        console.log(`[Client] GCS upload response status: ${gcsResponse.status}`);
+
+        if (!gcsResponse.ok) {
+          console.error('[Client] GCS upload failed');
+          // Try to mark as error
+          await fetch(`/api/upload/${recordingId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'error' }),
+          }).catch(() => {});
+          return;
+        }
+
+        console.log('[Client] GCS upload succeeded, triggering transfer to Drive...');
+
+        // Step 3: Trigger transfer from GCS to Drive
+        const transferResponse = await fetch(transferUrl, {
+          method: 'POST',
+        });
+
+        const transferData = await transferResponse.json().catch(() => ({}));
+        console.log('[Client] Transfer response:', transferData);
+
+        if (!transferResponse.ok) {
+          console.error('[Client] Transfer failed:', transferData);
+        } else {
+          console.log('[Client] Transfer to Drive succeeded');
+        }
+      } catch (uploadError) {
+        console.error('[Client] Upload error:', uploadError);
+        // The UploadProgress will show error via polling
+      }
     } catch (error) {
-      console.error('Error uploading recording:', error);
-      alert('Failed to upload recording');
-      setView('dashboard');
+      console.error('[Client] Error in recording flow:', error);
+      alert('Failed to process recording. Please check your internet connection and try again.');
     }
   }, []);
 
@@ -134,6 +181,10 @@ export default function Home() {
               shareUrl={uploadState.shareUrl}
               onComplete={() => {
                 // Optionally refresh dashboard
+              }}
+              onRecordAnother={() => {
+                setUploadState(null);
+                setView('record');
               }}
             />
           </div>

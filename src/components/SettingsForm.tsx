@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 interface Settings {
   driveFolderId: string;
-  defaultQuality: '720p' | '1080p';
+  defaultQuality: '720p' | '1080p' | '4k';
   defaultMicEnabled: boolean;
   defaultWebcamEnabled: boolean;
 }
@@ -139,13 +139,14 @@ export default function SettingsForm() {
               onChange={(e) =>
                 setSettings((prev) => ({
                   ...prev,
-                  defaultQuality: e.target.value as '720p' | '1080p',
+                  defaultQuality: e.target.value as '720p' | '1080p' | '4k',
                 }))
               }
               className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
             >
               <option value="720p">720p (HD)</option>
               <option value="1080p">1080p (Full HD)</option>
+              <option value="4k">4K (Ultra HD)</option>
             </select>
           </div>
 

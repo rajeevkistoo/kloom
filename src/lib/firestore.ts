@@ -19,11 +19,12 @@ export interface Recording {
   updatedAt: Date;
   viewCount: number;
   fileSize: number; // in bytes
+  gcsPath?: string; // GCS path for uploads in progress
 }
 
 export interface Settings {
   driveFolderId: string;
-  defaultQuality: '720p' | '1080p';
+  defaultQuality: '720p' | '1080p' | '4k';
   defaultMicEnabled: boolean;
   defaultWebcamEnabled: boolean;
 }

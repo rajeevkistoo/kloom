@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
-import { createRecording, updateRecording, getSettings } from '@/lib/firestore';
-import { uploadToDriveResumable } from '@/lib/drive';
+import { createRecording, getSettings } from '@/lib/firestore';
+import { generateSignedUploadUrl } from '@/lib/drive';
 
-// This endpoint handles chunked uploads for larger videos
-// It creates a recording entry immediately and returns a share link
-// while the actual upload happens in the background
+// This endpoint creates a recording entry and returns a signed URL
+// for direct client upload to GCS (bypassing Cloud Run's 32MB limit)
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,6 +27,9 @@ export async function POST(request: NextRequest) {
       // Generate unique ID for the recording
       const id = uuidv4().slice(0, 8);
 
+      // Generate signed URL for direct GCS upload
+      const { uploadUrl, gcsPath } = await generateSignedUploadUrl(id);
+
       // Create initial recording entry with 'processing' status
       const recording = await createRecording({
         id,
@@ -37,12 +39,16 @@ export async function POST(request: NextRequest) {
         duration: duration || 0,
         status: 'processing',
         fileSize: fileSize || 0,
+        gcsPath, // Store the GCS path for later transfer
       });
+
+      console.log(`[Upload] Created recording ${id}, GCS path: ${gcsPath}`);
 
       return NextResponse.json({
         recording,
         shareUrl: `/v/${id}`,
-        uploadUrl: `/api/upload/${id}`,
+        uploadUrl, // Signed URL for direct GCS upload
+        transferUrl: `/api/upload/${id}/transfer`, // URL to trigger GCS->Drive transfer
       });
     }
 
@@ -59,58 +65,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Handle the actual file upload for a specific recording
-export async function PUT(request: NextRequest) {
-  try {
-    const url = new URL(request.url);
-    const recordingId = url.searchParams.get('id');
-
-    if (!recordingId) {
-      return NextResponse.json(
-        { error: 'Recording ID required' },
-        { status: 400 }
-      );
-    }
-
-    const settings = await getSettings();
-    if (!settings?.driveFolderId) {
-      return NextResponse.json(
-        { error: 'Google Drive folder not configured' },
-        { status: 400 }
-      );
-    }
-
-    // Update status to uploading
-    await updateRecording(recordingId, { status: 'uploading' });
-
-    // Get the video data
-    const arrayBuffer = await request.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Upload to Drive
-    const fileName = `recording_${recordingId}.webm`;
-    const result = await uploadToDriveResumable(
-      buffer,
-      fileName,
-      'video/webm',
-      settings.driveFolderId
-    );
-
-    // Update recording with Drive file ID and mark as ready
-    await updateRecording(recordingId, {
-      driveFileId: result.fileId,
-      status: 'ready',
-    });
-
-    return NextResponse.json({
-      success: true,
-      driveFileId: result.fileId,
-    });
-  } catch (error) {
-    console.error('Error uploading video:', error);
-    return NextResponse.json(
-      { error: 'Upload failed' },
-      { status: 500 }
-    );
-  }
-}

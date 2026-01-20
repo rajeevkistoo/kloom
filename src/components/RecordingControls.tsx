@@ -242,11 +242,12 @@ export default function RecordingControls({
             </span>
             <select
               value={options.quality}
-              onChange={(e) => setOptions((prev) => ({ ...prev, quality: e.target.value as '720p' | '1080p' }))}
+              onChange={(e) => setOptions((prev) => ({ ...prev, quality: e.target.value as '720p' | '1080p' | '4k' }))}
               className="px-3 py-1 rounded border dark:bg-gray-700 dark:border-gray-600"
             >
               <option value="720p">720p</option>
               <option value="1080p">1080p</option>
+              <option value="4k">4K</option>
             </select>
           </label>
         </div>

@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
 
 interface UploadProgressProps {
   recordingId: string;
   shareUrl: string;
   onComplete?: () => void;
+  onRecordAnother?: () => void;
 }
 
 type UploadStatus = 'processing' | 'uploading' | 'ready' | 'error';
@@ -15,6 +15,7 @@ export default function UploadProgress({
   recordingId,
   shareUrl,
   onComplete,
+  onRecordAnother,
 }: UploadProgressProps) {
   const [status, setStatus] = useState<UploadStatus>('processing');
   const [copied, setCopied] = useState(false);
@@ -25,10 +26,16 @@ export default function UploadProgress({
       return;
     }
 
+    let pollCount = 0;
+    const maxPolls = 300; // 10 minutes max (2s intervals)
+
     const checkStatus = async () => {
+      pollCount++;
       try {
         const response = await fetch(`/api/upload/${recordingId}`);
         const data = await response.json();
+
+        console.log(`[UploadProgress] Poll ${pollCount}: status=${data.status}`);
 
         if (data.status) {
           setStatus(data.status);
@@ -37,10 +44,19 @@ export default function UploadProgress({
             onComplete?.();
           }
         }
+
+        // If still processing after many polls, something went wrong
+        if (pollCount >= maxPolls && data.status !== 'ready') {
+          console.error('[UploadProgress] Upload timed out');
+          setStatus('error');
+        }
       } catch (error) {
         console.error('Error checking status:', error);
       }
     };
+
+    // Check immediately on mount
+    checkStatus();
 
     const interval = setInterval(checkStatus, 2000);
     return () => clearInterval(interval);
@@ -163,12 +179,12 @@ export default function UploadProgress({
         >
           Open Link
         </a>
-        <Link
-          href="/"
+        <button
+          onClick={onRecordAnother}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
         >
           Record Another
-        </Link>
+        </button>
       </div>
     </div>
   );
