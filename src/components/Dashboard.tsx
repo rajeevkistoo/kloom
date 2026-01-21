@@ -47,6 +47,8 @@ export default function Dashboard() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchRecordings = useCallback(async () => {
     try {
@@ -108,9 +110,60 @@ export default function Dashboard() {
 
       if (response.ok) {
         setRecordings((prev) => prev.filter((r) => r.id !== id));
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
       }
     } catch (err) {
       console.error('Error deleting:', err);
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (selectedIds.size === filteredRecordings.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredRecordings.map((r) => r.id)));
+    }
+  };
+
+  const handleSelectOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+
+    const count = selectedIds.size;
+    if (!confirm(`Are you sure you want to delete ${count} recording${count !== 1 ? 's' : ''}?`)) {
+      return;
+    }
+
+    setIsDeleting(true);
+
+    try {
+      const deletePromises = Array.from(selectedIds).map((id) =>
+        fetch(`/api/recordings/${id}`, { method: 'DELETE' })
+      );
+
+      await Promise.all(deletePromises);
+
+      setRecordings((prev) => prev.filter((r) => !selectedIds.has(r.id)));
+      setSelectedIds(new Set());
+    } catch (err) {
+      console.error('Error deleting recordings:', err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -165,8 +218,35 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      {/* Search bar */}
+      {/* Search bar and bulk actions */}
       <div className="flex items-center space-x-4">
+        {/* Select All checkbox */}
+        {filteredRecordings.length > 0 && (
+          <label className="flex items-center space-x-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selectedIds.size === filteredRecordings.length && filteredRecordings.length > 0}
+              onChange={handleSelectAll}
+              className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm text-gray-600 dark:text-gray-400">Select All</span>
+          </label>
+        )}
+
+        {/* Delete Selected button */}
+        {selectedIds.size > 0 && (
+          <button
+            onClick={handleBulkDelete}
+            disabled={isDeleting}
+            className="flex items-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white rounded-lg font-medium transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <span>{isDeleting ? 'Deleting...' : `Delete (${selectedIds.size})`}</span>
+          </button>
+        )}
+
         <div className="relative flex-1 max-w-md">
           <svg
             className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400"
@@ -224,8 +304,16 @@ export default function Dashboard() {
               key={recording.id}
               className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700 hover:shadow-md transition-shadow"
             >
-              {/* Left side - thumbnail and info */}
+              {/* Left side - checkbox, thumbnail and info */}
               <div className="flex items-center space-x-4 flex-1 min-w-0">
+                {/* Checkbox */}
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(recording.id)}
+                  onChange={() => handleSelectOne(recording.id)}
+                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+                />
+
                 {/* Thumbnail placeholder */}
                 <Link
                   href={`/v/${recording.id}`}
