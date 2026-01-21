@@ -1,7 +1,24 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
+
+// Generate a unique viewer ID (stored in localStorage)
+function getViewerId(): string {
+  if (typeof window === 'undefined') return '';
+
+  let viewerId = localStorage.getItem('kloom_viewer_id');
+  if (!viewerId) {
+    viewerId = 'v_' + Math.random().toString(36).substring(2, 15);
+    localStorage.setItem('kloom_viewer_id', viewerId);
+  }
+  return viewerId;
+}
+
+// Generate a unique session ID for this viewing
+function generateSessionId(): string {
+  return 's_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+}
 
 interface Recording {
   id: string;
@@ -36,6 +53,91 @@ export default function VideoPlayer({ recording, videoUrl }: VideoPlayerProps) {
   const [status, setStatus] = useState(recording.status);
   const [currentVideoUrl, setCurrentVideoUrl] = useState(videoUrl);
   const [copied, setCopied] = useState(false);
+
+  // Analytics state
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const sessionIdRef = useRef<string>('');
+  const viewerIdRef = useRef<string>('');
+  const lastProgressRef = useRef<number>(0);
+
+  // Initialize analytics IDs
+  useEffect(() => {
+    viewerIdRef.current = getViewerId();
+    sessionIdRef.current = generateSessionId();
+  }, []);
+
+  // Track analytics event
+  const trackEvent = useCallback(async (
+    eventType: string,
+    currentTime?: number,
+    duration?: number
+  ) => {
+    if (!viewerIdRef.current || !sessionIdRef.current) return;
+
+    try {
+      await fetch('/api/analytics/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recordingId: recording.id,
+          eventType,
+          viewerId: viewerIdRef.current,
+          sessionId: sessionIdRef.current,
+          currentTime: currentTime || 0,
+          duration: duration || recording.duration,
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to track analytics:', error);
+    }
+  }, [recording.id, recording.duration]);
+
+  // Set up video event listeners for analytics
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || status !== 'ready') return;
+
+    const handlePlay = () => {
+      trackEvent('video_started', video.currentTime, video.duration);
+    };
+
+    const handlePause = () => {
+      if (!video.ended) {
+        trackEvent('video_paused', video.currentTime, video.duration);
+      }
+    };
+
+    const handleEnded = () => {
+      trackEvent('video_ended', video.duration, video.duration);
+    };
+
+    const handleSeeked = () => {
+      trackEvent('video_seeked', video.currentTime, video.duration);
+    };
+
+    const handleTimeUpdate = () => {
+      // Send progress event every 5 seconds of playback
+      const currentSecond = Math.floor(video.currentTime);
+      if (currentSecond > 0 && currentSecond % 5 === 0 && currentSecond !== lastProgressRef.current) {
+        lastProgressRef.current = currentSecond;
+        trackEvent('video_progress', video.currentTime, video.duration);
+      }
+    };
+
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('ended', handleEnded);
+    video.addEventListener('seeked', handleSeeked);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+
+    return () => {
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('ended', handleEnded);
+      video.removeEventListener('seeked', handleSeeked);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+    };
+  }, [status, trackEvent]);
 
   // Poll for status if video is still processing/uploading
   useEffect(() => {
@@ -99,6 +201,7 @@ export default function VideoPlayer({ recording, videoUrl }: VideoPlayerProps) {
         <div className="relative aspect-video bg-black rounded-xl overflow-hidden shadow-2xl">
           {status === 'ready' && recording.driveFileId ? (
             <video
+              ref={videoRef}
               src={`/api/stream/${recording.id}`}
               className="w-full h-full"
               controls
